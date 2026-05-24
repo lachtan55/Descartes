@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)",
+      "Bash(ls *)",
+      "PowerShell(netstat -ano)",
+      "PowerShell(Get-Process -Id *)",
+      "PowerShell(Stop-Process -Id * -Force)",
+      "PowerShell(python3 --version; py --version; \\(Get-Command python -ErrorAction SilentlyContinue\\).Source; \\(Get-Command py -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(& \"C:\\\\Users\\\\vojta\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m venv \"C:\\\\Users\\\\vojta\\\\Desktop\\\\Descartes-main\\\\venv\")",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\nodejs\\\\npm.cmd\" -ErrorAction SilentlyContinue; Get-ChildItem \"C:\\\\Users\\\\vojta\\\\AppData\\\\Roaming\\\\npm\\\\npm.cmd\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:ProgramFiles\\\\nodejs\" -ErrorAction SilentlyContinue | Select-Object Name)",
+      "PowerShell($env:PATH = \"C:\\\\Program Files\\\\nodejs;\" + $env:PATH; node --version; npm --version)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\vojta\\\\Desktop\\\\Descartes-main\" -Filter \".env*\" -Recurse -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName)",
+      "Bash(echo.)",
+      "Bash(node -e \"const pkg=require\\('./node_modules/lightweight-charts/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"from google import genai; client = genai.Client\\(api_key='test'\\); print\\('import OK'\\)\")",
+      "Bash(pip show *)",
+      "Bash(python -c \"import google; print\\(google.__path__\\)\")",
+      "Bash(python -c \"import google.genai as genai; print\\('OK', genai.__version__\\)\")",
+      "Bash(python -c \"from google import genai; print\\('from import OK'\\)\")",
+      "Bash(python -c \"from google import genai; print\\('OK'\\)\")",
+      "Bash(where python *)",
+      "Bash(venv\\\\Scripts\\\\python.exe -c \"from google import genai; print\\(genai.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\vojta\\\\Desktop\\\\Descartes-main\\\\venv\\\\Scripts\\\\python.exe\" -c \"from google import genai; print\\(genai.__version__\\)\")",
+      "Bash(python -m py_compile backend/routers/macro.py)",
+      "Bash(python -m py_compile backend/models/macro_models.py)",
+      "Bash(python -m py_compile backend/services/macro_catalog_service.py)",
+      "Bash(python -m py_compile backend/services/macro_ai_service.py)",
+      "Bash(python -m py_compile backend/main.py)",
+      "Bash(dir backend\\\\venv)",
+      "Bash(dir .venv)",
+      "Bash(dir *.bat)"
+    ]
+  }
+}

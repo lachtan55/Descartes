@@ -1,0 +1,59 @@
+DESCARTES — HOW TO START
+========================
+
+Open 3 separate terminal windows and run one command in each.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WINDOW 1 — POCKETBASE (database)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+cd "<this folder>\Database"
+.\pocketbase.exe serve
+
+Runs on:  http://127.0.0.1:8090
+Admin UI: http://127.0.0.1:8090/_/
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WINDOW 2 — BACKEND (FastAPI)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+cd "<this folder>"
+venv\Scripts\activate
+uvicorn backend.main:app --reload --port 8000
+
+Runs on:  http://127.0.0.1:8000
+API docs: http://127.0.0.1:8000/docs
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WINDOW 3 — FRONTEND (React / Vite)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+cd "<this folder>\frontend"
+npm run dev
+
+Runs on:  http://localhost:5173
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+START ORDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. PocketBase first  (backend depends on it being reachable)
+2. FastAPI backend
+3. Frontend last
+
+All three must be running simultaneously.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- All paths are relative to the folder containing this file.
+- GEMINI_API_KEY lives in:  backend\.env
+- PocketBase data lives in: Database\pb_data\
+- Frontend env var:         frontend\.env  (VITE_POCKETBASE_URL)
+- PocketBase default login: set at first run via the Admin UI

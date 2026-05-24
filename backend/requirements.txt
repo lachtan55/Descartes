@@ -1,0 +1,15 @@
+fastapi>=0.109.2
+uvicorn[standard]>=0.27.1
+yfinance>=0.2.37
+pandas>=2.2.0
+python-dotenv>=1.0.1
+google-genai>=1.0.0
+httpx>=0.26.0
+pypdf
+python-docx
+openpyxl
+nest_asyncio
+# ── Macro page additions ──
+anthropic>=0.40.0
+openai>=1.0.0
+python-multipart>=0.0.9

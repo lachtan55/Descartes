@@ -1,0 +1,21 @@
+node_modules/
+=*
+dist/
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.xlsx
+*.csv
+.DS_Store
+
+# Auto-generated frontend types (source of truth: backend/models/macro_models.py)
+frontend/src/pages/macro/types.ts
+
+# PocketBase
+pb_data/
+pb_backups/
+*.db
+*.db-shm
+*.db-wal

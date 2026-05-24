@@ -1,0 +1,707 @@
+================================================================================
+  DESCARTES — MACROECONOMICS PAGE: HANDOFF & REMAINING WORK
+  Written: 2026-05-24
+  Read this before touching anything in the macro subsystem.
+================================================================================
+
+This document covers:
+  A) How to set up the project on a new device (database, env vars, venv)
+  B) What is implemented and working right now
+  C) Every remaining task, with file locations and implementation instructions
+  D) The full data contract (backend ↔ frontend API shapes)
+  E) Known gotchas
+
+================================================================================
+  A. NEW DEVICE SETUP
+================================================================================
+
+--- A1. Prerequisites ---
+
+  Python   3.11+     (check: python --version)
+  Node.js  20+       (check: node --version)
+  PocketBase binary  — lives in Database\pocketbase.exe (copy it over)
+                      or download from https://pocketbase.io/docs/ (v0.26+)
+
+--- A2. Project layout ---
+
+  Descartes-mainV2\
+  ├── backend\               FastAPI backend (Python)
+  │   ├── .env               API keys — DO NOT commit to git
+  │   ├── requirements.txt   Python dependencies
+  │   ├── main.py            Registers all routers incl. macro
+  │   ├── config.py          Reads .env vars into Python constants
+  │   ├── routers\macro.py   All /api/macro/* endpoints
+  │   ├── services\
+  │   │   ├── macro_catalog_service.py   Catalog CRUD (reads/writes macro_catalog.json)
+  │   │   ├── macro_ai_service.py        AI report generation (Anthropic/Google/OpenAI)
+  │   │   ├── tag_mapping_service.py     Highlighted docs bridge (Phase 7)
+  │   │   └── imf_service.py             IMF WEO CSV handler (Phase 5, stub)
+  │   ├── models\macro_models.py         Pydantic models (must stay in sync with frontend types.ts)
+  │   └── macro_catalog.json             AUTO-CREATED on first API call if missing
+  │
+  ├── frontend\src\
+  │   ├── pages\MacroeconomicsSection.tsx     Top-level page (tabs, bridge status)
+  │   ├── pages\macro\
+  │   │   ├── types.ts                        TypeScript types (must stay in sync with macro_models.py)
+  │   │   ├── tabs\MaintenanceTab.tsx          MAINTENANCE tab — series registry table
+  │   │   ├── tabs\ByRegionTab.tsx             BY REGION tab — 6 region dashboards
+  │   │   ├── tabs\AlphaTab.tsx                ALPHA tab — placeholder indicator cards
+  │   │   └── components\                      All chart/panel components
+  │   ├── config\modules.ts                   Bloomberg command aliases (MACRO, MAINT, etc.)
+  │   └── config\alphaIndicators.ts           Alpha tab config
+  │
+  ├── Database\
+  │   ├── pocketbase.exe                      PocketBase binary
+  │   ├── pb_data\                            PocketBase data — BACK THIS UP
+  │   └── pb_migrations\                      Auto-applied on PocketBase startup
+  │       └── 1779580800_add_starred_to_documents.js   ← CRITICAL, see A4
+  │
+  ├── START_DESCARTES.txt    Quick start instructions (3 terminals)
+  └── MACRO_TODO.txt         This file
+
+--- A3. Backend setup ---
+
+  # From project root (Descartes-mainV2\)
+
+  # 1. Create and activate virtual environment
+  python -m venv venv
+  venv\Scripts\activate
+
+  # 2. Install dependencies
+  pip install -r backend\requirements.txt
+
+  # 3. Populate backend\.env (see A5 for keys)
+  #    The file must exist even if keys are empty — copy the template below
+
+--- A4. PocketBase setup (CRITICAL for Starred Docs feature) ---
+
+  PocketBase auto-runs all migration files in Database\pb_migrations\ at startup.
+  On a new device:
+
+  1. Copy the ENTIRE Database\ folder (including pb_data\ for existing data,
+     or start fresh). Do NOT just copy pocketbase.exe alone.
+
+  2. Start PocketBase:
+       cd Database
+       .\pocketbase.exe serve
+
+  3. On FIRST RUN with a fresh pb_data\: go to http://127.0.0.1:8090/_/
+     and create an admin account.
+
+  4. On FIRST RUN, bootstrap collections (creates documents + tag_taxonomy):
+       cd Database
+       python ..\pocketbase_schema.py http://127.0.0.1:8090 admin@email.com YourPassword
+
+  5. The migration 1779580800_add_starred_to_documents.js adds two fields to the
+     documents collection (collection ID: pbc_3332084752):
+       - starred      (bool)    — user curation flag for Highlighted Docs panel
+       - starred_at   (date)    — timestamp of starring
+
+     PocketBase runs this automatically from pb_migrations\ on every startup.
+     If the collection was created BEFORE this migration existed, PocketBase will
+     apply it on the next startup. Nothing manual required.
+
+  6. frontend\.env must contain:
+       VITE_POCKETBASE_URL=http://localhost:8090
+     (or the production URL if deployed)
+
+--- A5. backend\.env — ALL required keys ---
+
+  # backend\.env — create this file on the new device
+
+  # REQUIRED (Gemini — already have key, copy from old machine)
+  GEMINI_API_KEY=AIzaSyAxhunfRKdGLYquZgphY9Na93Zh98ysDiA
+
+  # REQUIRED for FRED bridge (Phase 4) — free key
+  # Register at: https://fred.stlouisfed.org/docs/api/api_key.html
+  FRED_API_KEY=
+
+  # REQUIRED for AI reports — add whichever you have
+  ANTHROPIC_API_KEY=
+  OPENAI_API_KEY=
+
+  # Optional overrides
+  AI_REPORT_DEFAULT_MODEL=claude-sonnet-4-6
+  MACRO_DATA_CACHE_TTL_HOURS=24
+
+  NOTE: FRED, ECB, and World Bank APIs are FREE — no payment required.
+  NOTE: Gemini key already works (copy from old device).
+
+--- A6. Frontend setup ---
+
+  cd frontend
+  npm install
+  npm run dev        # starts on http://localhost:5173
+
+--- A7. Start order ---
+
+  1. PocketBase  — cd Database && .\pocketbase.exe serve
+  2. FastAPI      — venv\Scripts\activate && uvicorn backend.main:app --reload --port 8000
+  3. Frontend     — cd frontend && npm run dev
+
+  Navigate to MACRO via the command bar: type MACRO, MACROECONOMICS, MAINT, or MAINTENANCE.
+
+
+================================================================================
+  B. WHAT IS IMPLEMENTED AND WORKING (Phases 1–3)
+================================================================================
+
+All of the following are complete, tested, and passing smoke tests as of 2026-05-24.
+
+  [✓] MAINTENANCE tab
+      - Bloomberg-style catalog table of all 41 macro series
+      - Filter by region, category, bridge status
+      - Search bar (searches id, label, region, source, notes)
+      - Toggle active/inactive per series (PATCH /api/macro/catalog/{id}/active)
+      - Cannot delete core series (returns 403)
+      - Bridge status banner showing 7 data sources and their statuses
+      - Expandable rows showing series metadata
+
+  [✓] BY REGION tab — 6 regions: US, China, Eurozone, Germany, Japan, Czechia
+      - GDP section: nominal bar chart + growth bar chart + Outlook table
+      - CPI section: line chart overlay (CPI + core CPI) + Outlook table
+      - Interest Rates section: stepAfter line chart + yield overlays + Outlook table
+      - AI Report panel: model selector, GENERATE button, ReactMarkdown output
+      - Highlighted Docs panel: starred docs from PocketBase with macro tags
+      - China disclaimer banner (NBS data quality warning)
+      - Draggable splitter between chart area and right panel (55/45 default)
+      - 6 provider rows in Outlook tables (IMF, World Bank, OECD + region-specific)
+      - Consensus / High / Low rows computed from provider data
+
+  [✓] ALPHA tab — placeholder structure for Phase 5
+
+  [✓] Bridge status indicator in section header (4 states: connected/stale/manual/not_built)
+
+  [✓] Starred documents
+      - Star/unstar button (☆/★) on DOCUMENTS tab
+      - Starred docs appear in Highlighted Docs panel per region (matched by macro tag)
+      - PocketBase migration adds starred + starred_at fields
+      - Frontend queries PocketBase directly (no backend roundtrip for basic feature)
+
+  [✓] AI report generation (when API keys are configured)
+      - Routes claude-* → Anthropic SDK
+      - Routes gemini-* → existing gemini.py helper
+      - Routes gpt-* → OpenAI AsyncClient
+      - Returns error inline (not HTTP 500) so UI can display it
+
+  [✓] All /api/macro/* endpoints (catalog CRUD, bridge-status, gdp, cpi, rates, outlook,
+      ai-models, ai-report, highlighted-docs, weo-editions)
+
+  DATA NOTE: All region data (GDP, CPI, rates, outlook) is MOCK DATA hardcoded in
+  backend\routers\macro.py. This is the primary remaining work (Phase 4+).
+
+
+================================================================================
+  C. REMAINING WORK — ALL PHASES
+================================================================================
+
+──────────────────────────────────────────────────────────────────────────────
+  PHASE 4: LIVE DATA BRIDGES
+  Priority: HIGH — replaces all mock data with real numbers
+──────────────────────────────────────────────────────────────────────────────
+
+  When a bridge is built, the pattern is:
+    1. Create backend\services\{source}_service.py
+    2. Call it from the router endpoint (gdp/cpi/rates) instead of _get_mock_*()
+    3. Update catalog_service.get_bridge_status_all() to return real status
+    4. Set bridge_status = "connected" in macro_catalog.json entries for that source
+
+  The series catalog already has api_series_code populated for FRED and ECB series.
+  See macro_catalog.json (auto-created in backend\) or _DEFAULT_CATALOG in
+  backend\services\macro_catalog_service.py for all series codes.
+
+  ---- BRIDGE 1: FRED API (source = "fred_api") ----
+  Affects: All US series (10 series)
+  Status:  not_built → needs backend\services\fred_service.py
+
+  API base: https://api.stlouisfed.org/fred/series/observations
+  Params:   series_id=XXXX&api_key=FRED_API_KEY&file_type=json&sort_order=desc&limit=100
+  Key:      FRED_API_KEY in backend\.env (free, register at fred.stlouisfed.org)
+
+  Series to fetch:
+    us_gdp_nominal_q      → FRED id: GDP           (quarterly, billions USD SAAR)
+    us_gdp_nominal_a      → FRED id: GDPA          (annual)
+    us_gdp_growth_q       → FRED id: A191RL1Q225SBEA  (% change annualized rate)
+    us_gdp_growth_a       → FRED id: A191RL1A225NBEA  (annual % change)
+    us_cpi_monthly        → FRED id: CPIAUCSL      (index 1982-84=100)
+    us_core_cpi_monthly   → FRED id: CPILFESL
+    us_ppi_monthly        → FRED id: PPIACO
+    us_fed_funds_rate     → FRED id: FEDFUNDS      (effective rate, monthly avg)
+    us_yield_2y           → FRED id: DGS2          (daily)
+    us_yield_10y          → FRED id: DGS10         (daily)
+
+  Response shape: {"observations": [{"date": "2024-01-01", "value": "123.4"}, ...]}
+  Note: value comes back as a string; "." means missing (skip those points).
+
+  Implementation skeleton for fred_service.py:
+
+    import httpx
+    from backend.config import FRED_API_KEY
+    FRED_BASE = "https://api.stlouisfed.org/fred"
+
+    async def fetch_series(series_id: str, limit: int = 40) -> list[dict]:
+        url = f"{FRED_BASE}/series/observations"
+        params = {
+            "series_id": series_id, "api_key": FRED_API_KEY,
+            "file_type": "json", "sort_order": "desc", "limit": limit,
+        }
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+        obs = r.json()["observations"]
+        return [o for o in reversed(obs) if o["value"] != "."]
+
+  After fetching, convert to MacroDataPoint list using _dp() from macro.py.
+
+  ---- BRIDGE 2: ECB Statistical Data Warehouse (source = "ecb_api") ----
+  Affects: Eurozone and Germany series (6 series)
+  Status:  not_built → needs backend\services\ecb_service.py
+
+  API base: https://data-api.ecb.europa.eu/service/data
+  Format:   /{flow_ref}/{series_key}?format=jsondata&lastNObservations=40
+  Key:      None required — public API
+
+  Series to fetch:
+    eu_hicp_monthly       → flow: ICP, key: M.U2.N.000000.4.INX
+                            URL: .../ICP/M.U2.N.000000.4.INX?format=jsondata&lastNObservations=48
+    eu_ecb_deposit_rate   → flow: FM, key: B.U2.EUR.4F.KR.DFR.LEV
+    eu_yield_10y_bund     → flow: FM, key: B.DE.EUR.FR.BB.U2_EUR.WT.B
+    de_hicp_monthly       → flow: ICP, key: M.DE.N.000000.4.INX
+    eu_gdp_growth_q       → flow: MNA, key: Q.Y.I8.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.LR.GY
+    de_gdp_growth_q       → flow: MNA, key: Q.Y.DE.W2.S1.S1.B.B1GQ._Z._Z._Z.EUR.LR.GY
+
+  ECB JSON format is complex — observations come as arrays indexed by time dimension.
+  Use the ECB SDMX REST API guide: https://data-api.ecb.europa.eu/help/
+
+  Simplest approach: use the pandas-datareader ECB reader or parse the SDMX JSON:
+    pip install sdmx1    # SDMX parsing library
+  Or use raw httpx + parse the "dataSets[0].series" structure.
+
+  ---- BRIDGE 3: WORLD BANK API (source = "worldbank_api") ----
+  Affects: Germany GDP nominal annual (1 series)
+  Status:  not_built → can add to ecb_service.py or separate worldbank_service.py
+
+  API base: https://api.worldbank.org/v2
+  URL:      /country/DE/indicator/NY.GDP.MKTP.CD?format=json&mrv=10
+  Key:      None required
+
+  Response: [{metadata}, [{indicator, country, countryiso3code, date, value, ...}]]
+  Note: date is "2023", "2022" etc. (annual). value can be null for recent years.
+
+  Series to fetch:
+    de_gdp_nominal_a      → indicator: NY.GDP.MKTP.CD, country: DE
+                            (value in current USD — convert to EUR at period rate, or
+                            just use USD and note it; ECB also has this in EUR)
+
+  ---- BRIDGE 4: CZSO API (source = "czso_api") ----
+  Affects: Czechia GDP and CPI (3 series)
+  Status:  not_built → needs backend\services\czso_service.py
+
+  Czech Statistical Office open data:
+  URL: https://vdb.czso.cz/vdbvo2/faces/cs/index.jsf (human UI)
+  API: https://vdb.czso.cz/pll/eweb/package_getdata
+
+  CZSO is not well-documented for API access. Recommended approach:
+  1. Use the CZSO open data portal: https://data.gov.cz/
+  2. Or use the CZSO JSON-stat API endpoint for quarterly GDP.
+
+  Specific datasets:
+    cz_gdp_nominal_a  → Table code: HDP_SEKCE, or use OECD data for CZE
+    cz_gdp_growth_q   → Table code: HDPR_SEKCE quarterly
+    cz_cpi_monthly    → Table code: 0100071 (CPI monthly, MoM and YoY)
+
+  Fallback: Use OECD API for Czechia (same data, better API):
+    https://sdmx.oecd.org/public/rest/data/OECD.SDD.NAD,DSD_NAMAIN1@DF_TABLE1_EXPENDITURE,1.0/
+    Q.CZE.........B1GQ.L.LNBQRSA.....?startPeriod=2015-Q1
+
+  ---- BRIDGE 5: CNB API (source = "cnb_api") ----
+  Affects: Czechia 2W repo rate (1 series)
+  Status:  not_built → needs backend\services\cnb_service.py
+
+  CNB publishes rate decision data:
+  URL: https://www.cnb.cz/cnb/STAT.ARADY_PKG.SESTAVA?p_sestuid=22518&p_strid=ACSBI&p_lang=CS
+  Or: https://www.cnb.cz/en/monetary-policy/bank-board-decisions/
+
+  The CNB publishes CSV downloads for interest rate history:
+  https://www.cnb.cz/cnb/STAT.ARADY_PKG.PARAMETRY_SESTAVY?p_strid=ACSBI&p_lang=EN
+
+  Implementation: download CSV, parse into (date, rate) pairs.
+
+  Series to fetch:
+    cz_cnb_repo_rate  → "2T repo rate" column
+
+  ---- BRIDGE 6: MANUAL UPLOAD (source = "manual_upload") ----
+  Affects: China and Japan series (7 series)
+  Status:  endpoint exists but returns 501
+
+  China (NBS — National Bureau of Statistics) and Japan (Cabinet Office / BOJ)
+  don't have clean free APIs. The plan is manual CSV upload.
+
+  The upload endpoint already exists: POST /api/macro/upload/{series_id}
+  It currently returns 501 (not implemented).
+
+  To implement (Phase 8):
+    1. Accept UploadFile (CSV or XLSX)
+    2. Validate columns: must have "date" and "value" columns at minimum
+    3. Parse rows into MacroDataPoint list
+    4. Store in a JSON file: backend\data\{series_id}.json (or SQLite later)
+    5. Return UploadResult with rows_imported, date_range_start, date_range_end
+    6. Update series bridge_status to "manual" in catalog
+
+  CSV format expected:
+    date,value
+    2024-01-01,5.3
+    2023-10-01,4.9
+    ...
+
+  Series using manual_upload:
+    cn_gdp_nominal_a     (China NBS — annual, trillion CNY)
+    cn_gdp_growth_q      (China NBS — quarterly YoY %)
+    cn_cpi_monthly       (China NBS — monthly YoY %)
+    cn_pboc_lpr_1y       (PBOC — meeting-based)
+    jp_gdp_nominal_a     (Japan Cabinet Office — annual, trillion JPY)
+    jp_gdp_growth_q      (Japan Cabinet Office — quarterly % QoQ)
+    jp_cpi_monthly       (Japan MIC — monthly YoY %)
+    jp_boj_policy_rate   (BOJ — meeting-based)
+
+  Download sources:
+    China NBS:     https://data.stats.gov.cn/english/
+    Japan SNA:     https://www.esri.cao.go.jp/en/sna/data/kakuhou/files/2024/tables/23ffm7r_en.csv
+    Japan CPI:     https://www.stat.go.jp/english/data/cpi/
+    BOJ rates:     https://www.boj.or.jp/en/statistics/boj/other/acthist/index.htm
+
+
+  ---- WIRING BRIDGES INTO THE ROUTER ----
+
+  After implementing a service, update backend\routers\macro.py:
+
+  BEFORE (mock):
+    @router.get("/gdp/{region}", response_model=GDPData)
+    def get_gdp(region: str):
+        return _get_mock_gdp(region)
+
+  AFTER (live):
+    @router.get("/gdp/{region}", response_model=GDPData)
+    async def get_gdp(region: str):
+        if region == "US" and FRED_API_KEY:
+            return await fred_service.get_gdp(region)
+        if region in ("Eurozone", "Germany") and ECB_AVAILABLE:
+            return await ecb_service.get_gdp(region)
+        return _get_mock_gdp(region)   # fallback while bridges are being built
+
+  Also update get_bridge_status_all() in macro_catalog_service.py to actually
+  test connectivity and return "connected" or "stale" instead of always "not_built".
+
+
+──────────────────────────────────────────────────────────────────────────────
+  PHASE 5: IMF WEO CSV + ALPHA TAB
+  Priority: MEDIUM
+──────────────────────────────────────────────────────────────────────────────
+
+  ---- 5A: IMF WEO CSV Upload (replaces hardcoded mock outlook data) ----
+
+  The Outlook table in each region dashboard currently shows hardcoded IMF/WB/OECD
+  forecasts from _get_mock_outlook() in macro.py.
+
+  The real workflow is:
+    1. User downloads WEO CSV from https://www.imf.org/en/Publications/WEO
+       (April and October editions)
+    2. User uploads via POST /api/macro/weo-editions (currently returns 501)
+    3. Backend parses and stores by edition label (e.g., "Apr2025")
+    4. GET /api/macro/outlook/{region}/{indicator} reads from stored WEO data
+
+  WEO CSV format:
+    WEO Country Code | ISO | Subject Descriptor | Subject Notes | Units | Scale |
+    Country/Series-specific Estimates Start After | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026
+
+  Key WEO subject codes:
+    NGDP_RPCH  — GDP growth (%)
+    PCPIPCH    — CPI inflation (%)
+    FPOLM_FFIR — Policy rate (%) [not always present]
+
+  Storage: backend\data\weo_{edition}.json or SQLite table
+
+  Implementation file: backend\services\imf_service.py (stub already exists,
+  check if it has list_editions() or just a placeholder)
+
+  ---- 5B: Alpha Tab ----
+
+  frontend\src\pages\macro\tabs\AlphaTab.tsx is a placeholder.
+  frontend\src\config\alphaIndicators.ts defines the indicator card structure.
+
+  When implementing, each indicator card should show:
+    - A computed score or value
+    - A direction arrow (bullish/bearish/neutral)
+    - A color band based on z-score or percentile rank
+    - Category label (momentum, value, macro, sentiment)
+
+  Indicator sections defined in alphaIndicators.ts:
+    sp500, dax, nikkei, china, world
+
+  The Phase 5 plan was to show:
+    - PMI composite scores
+    - Yield curve slopes (10Y-2Y spread)
+    - CPI vs. policy rate spreads (real rate)
+    - Earnings revision momentum
+    - Liquidity indicators (M2 growth)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  PHASE 6: DATA CACHING
+  Priority: LOW (needed before production)
+──────────────────────────────────────────────────────────────────────────────
+
+  Currently all API calls to FRED/ECB/etc. happen on every request — no caching.
+  MACRO_DATA_CACHE_TTL_HOURS is read from .env (default 24) but not yet used.
+
+  Options (simplest first):
+    A) In-memory dict cache with datetime TTL (zero deps, lost on restart)
+    B) JSON file cache in backend\cache\ (persists across restarts)
+    C) SQLite via aiosqlite or peewee (already installed)
+    D) Redis (heavy — probably overkill)
+
+  Recommended: Option B for now.
+    - On request: check if backend\cache\{series_id}.json exists and is < TTL hours old
+    - If yes: return cached data
+    - If no: fetch from live API, write to cache, return
+
+  Location: add caching decorator/wrapper to each *_service.py
+
+
+──────────────────────────────────────────────────────────────────────────────
+  PHASE 7: SERVER-SIDE HIGHLIGHTED DOCS (tag_mapping_service.py)
+  Priority: LOW (frontend already queries PocketBase directly)
+──────────────────────────────────────────────────────────────────────────────
+
+  GET /api/macro/highlighted-docs/{region} currently returns an empty list.
+  The frontend queries PocketBase directly via fetchStarredDocuments(region),
+  so this works fine without Phase 7.
+
+  When implementing Phase 7:
+    1. Add PocketBase Admin API client to backend
+       (use httpx to call PocketBase HTTP API, authenticated with admin token)
+    2. In tag_mapping_service.get_highlighted_docs(region):
+       - GET {POCKETBASE_URL}/api/collections/documents/records
+         ?filter=starred=true&expand=&perPage=50
+       - Filter client-side for macro tags containing region name
+       - Filter for data_type in {"research_report","thesis","macro_data","notes","news"}
+    3. PocketBase URL for backend: add POCKETBASE_URL=http://127.0.0.1:8090 to .env
+    4. PocketBase Admin token: add POCKETBASE_ADMIN_TOKEN=... to .env
+       (create a superuser service account in PocketBase admin UI)
+
+  Rule for a doc to appear in Highlighted Docs panel:
+    starred = True
+    AND has tag with category = "macro" AND tag.value contains region name
+    AND tags.data_type in {research_report, thesis, macro_data, notes, news}
+
+
+──────────────────────────────────────────────────────────────────────────────
+  PHASE 8: CUSTOM FORECAST PROVIDERS + MANUAL DATA UPLOAD
+  Priority: LOW
+──────────────────────────────────────────────────────────────────────────────
+
+  ---- 8A: Custom forecast provider persistence ----
+
+  POST /api/macro/outlook/custom-provider currently returns {"status": "ok"} without
+  actually saving anything. Custom provider rows disappear on page reload.
+
+  To implement:
+    - Storage: backend\data\custom_providers.json (key: "{region}/{indicator}")
+    - POST: append/update row in JSON file
+    - DELETE: remove row from JSON file (locked providers already return 403)
+    - GET /api/macro/outlook/{region}/{indicator}: merge locked (mock/WEO) rows
+      with custom rows from the JSON file
+
+  Request model (already defined in macro.py):
+    provider, provider_label, region, indicator, values: dict[int, float], unit
+
+  ---- 8B: Manual CSV/XLSX upload (for China and Japan data) ----
+
+  POST /api/macro/upload/{series_id} currently returns 501.
+
+  To implement:
+    1. Accept UploadFile
+    2. Detect format from filename (.csv vs .xlsx)
+    3. Parse with pandas: pd.read_csv() or pd.read_excel()
+    4. Validate: must have columns "date" and "value"
+    5. Parse dates with pd.to_datetime(), convert values to float
+    6. Write to backend\data\{series_id}.json as list of {date, value} dicts
+    7. Update catalog entry: bridge_status = "manual", last_updated = now
+    8. Return UploadResult
+
+  Then update get_series_data() in macro_catalog_service.py to read from
+  backend\data\{series_id}.json if it exists before falling back to mock data.
+
+
+================================================================================
+  D. DATA CONTRACT — BACKEND ↔ FRONTEND
+================================================================================
+
+  Keep backend\models\macro_models.py and frontend\src\pages\macro\types.ts in sync.
+  If you change one, change the other.
+
+  MacroDataPoint:
+    date: str          # ISO date "2024-01-01"
+    value: float
+    label?: str        # auto-generated chart X-axis label e.g. "Q1'24", "Jan'24"
+
+  GDPData:             { region, nominal: MacroDataPoint[], growth: MacroDataPoint[] }
+  CPIData:             { region, cpi: MacroDataPoint[], core_cpi: MacroDataPoint[] }
+  RatesData:           { region, policy_rate: MacroDataPoint[], yield_2y?, yield_10y? }
+
+  ForecastEntry:
+    provider_id: str        # "imf", "world_bank", "oecd", "fed", "ecb", "cnb", etc.
+    provider_label: str     # "IMF Apr 2025 WEO"
+    color: str              # hex color e.g. "#4285F4"
+    is_locked: bool         # locked providers cannot be deleted
+    values: dict[str, float?]  # year_str → value e.g. {"2025": 2.3, "2026": null}
+    vintage?: str
+
+  OutlookTable:
+    region, indicator, years: str[], entries: ForecastEntry[],
+    consensus: dict[str, float?], high: dict[str, float?], low: dict[str, float?]
+
+  BridgeStatus:
+    source_name: str        # "fred_api", "ecb_api", "czso_api", etc.
+    status: str             # "connected" | "stale" | "manual" | "not_built"
+    series_count: int
+    last_refreshed?: str
+    last_error?: str
+
+  MacroReport:             { model, region, content, generated_at, error? }
+
+  AIReportRequest:         { region, model: str = "claude-sonnet-4-6" }
+
+  Bridge status display colors (in frontend):
+    connected  → #00c851  (green)
+    stale      → #f0a500  (amber)
+    manual     → #5c9dff  (blue)
+    not_built  → #444     (grey)
+
+  API endpoints (all under /api/macro/):
+    GET    /catalog                      → list[MacroSeries] (filters: region, category, status, search)
+    GET    /catalog/{id}                 → MacroSeries
+    POST   /catalog                      → MacroSeries (201)
+    PUT    /catalog/{id}                 → MacroSeries
+    DELETE /catalog/{id}                 → {"deleted": id} — 403 if is_core=True
+    PATCH  /catalog/{id}/active          → MacroSeries (body: {"active": bool})
+    GET    /data/{id}?n=20               → list[MacroDataPoint]
+    POST   /refresh/{id}                 → {"job_id", "status"} — 503 if not_built
+    GET    /bridge-status                → list[BridgeStatus]
+    GET    /gdp/{region}                 → GDPData
+    GET    /cpi/{region}                 → CPIData
+    GET    /rates/{region}               → RatesData
+    GET    /outlook/{region}/{indicator} → OutlookTable (indicator: gdp_growth|cpi|policy_rate)
+    POST   /outlook/custom-provider      → {"status", "provider"} (Phase 8: persist)
+    DELETE /outlook/custom-provider/{id} → {"deleted": id} — 403 if locked
+    GET    /ai-models                    → list[AIModelInfo]
+    POST   /ai-report                    → MacroReport (body: AIReportRequest)
+    GET    /highlighted-docs/{region}    → list[HighlightedDocument] (Phase 7: live)
+    GET    /weo-editions                 → list (Phase 5: implement)
+    POST   /weo-editions?edition_label=  → (Phase 5: implement)
+    POST   /upload/{id}                  → UploadResult (Phase 8: implement)
+
+  Regions (case-sensitive strings used in API paths and catalog):
+    "US", "China", "Eurozone", "Germany", "Japan", "Czechia"
+
+
+================================================================================
+  E. GOTCHAS AND IMPORTANT NOTES
+================================================================================
+
+  1. VENV PATH
+     Always use .\venv\Scripts\python.exe -m pip install (not pip.exe directly).
+     On this machine there is/was a Descartes-main\ sibling folder with its own
+     venv — make sure you're in Descartes-mainV2\ and using its venv.
+
+  2. macro_catalog.json IS AUTO-CREATED
+     If backend\macro_catalog.json doesn't exist on a new device, the catalog
+     service creates it from the hardcoded _DEFAULT_CATALOG on the first API call.
+     You do NOT need to copy or create this file manually. Any manual edits
+     (toggle active, notes) made by the user ARE persisted to this JSON file —
+     copy it over if you want to preserve those edits.
+
+  3. FRONTEND TYPES MUST MATCH BACKEND MODELS
+     If you add a field to a Pydantic model in macro_models.py, add it to
+     types.ts as well. The frontend uses TypeScript strict mode — mismatches
+     will cause build errors.
+
+  4. CHART LABEL GENERATION
+     The _dp() function in macro.py auto-generates quarter labels (Q1'24 etc.)
+     from the date string. When bridging live data, make sure dates are stored
+     as ISO strings "YYYY-MM-DD" and passed through _dp(). The label is used
+     as the Recharts X-axis dataKey, so every point must have it.
+
+  5. CHINA DATA QUALITY
+     China series have china_disclaimer=True in the catalog. The frontend shows
+     a permanent amber banner for the China dashboard. This is by design.
+     Do not remove the disclaimer even when live data is connected.
+
+  6. LOCKED FORECAST PROVIDERS
+     These provider IDs cannot be deleted:
+     imf, world_bank, oecd, ecb, fed, boj, pboc, cnb, bundesbank
+     The 403 guard is in DELETE /api/macro/outlook/custom-provider/{id}.
+     These are defined as a set _LOCKED in macro.py.
+
+  7. AI REPORT MODELS
+     The Anthropic client in macro_ai_service.py is synchronous (not async).
+     It is wrapped in an async method but the client.messages.create() call
+     is blocking. For production, switch to AsyncAnthropic client.
+
+  8. POCKETBASE STARRED FIELD
+     The starred and starred_at fields were added in migration
+     1779580800_add_starred_to_documents.js. If PocketBase is already running
+     with an old pb_data\ that predates this migration file, PocketBase will
+     apply the migration automatically on next startup.
+
+     If the migration somehow fails or the collection ID changed, the
+     fetchStarredDocuments() function in pocketbase.ts has a try/catch that
+     silently returns an empty list. The Highlighted Docs panel will be empty
+     rather than crashing.
+
+  9. ECB SDMX API
+     The ECB API uses SDMX 2.1 format. The JSON responses are deeply nested.
+     Use the sdmx1 Python library (pip install sdmx1) or parse manually:
+       data = r.json()["dataSets"][0]["series"]
+       # series keys are positional indices into the "structure.dimensions.series" array
+
+  10. CORS
+      CORS_ORIGINS in backend\config.py is set to localhost:5173 only.
+      If deploying to production, add the production frontend URL here.
+
+  11. RECHARTS VERSIONS
+      Frontend uses recharts@2.10.3. Do NOT upgrade — there are breaking API
+      changes in recharts v3. Stay on 2.x.
+
+  12. HOW TO ADD A NEW REGION
+      a) Add series to _DEFAULT_CATALOG in macro_catalog_service.py
+      b) Add mock data to _get_mock_gdp(), _get_mock_cpi(), _get_mock_rates()
+         and _get_mock_outlook() in macro.py
+      c) Add region to LOCKED dict in _get_mock_outlook()
+      d) Add region flag tab to ByRegionTab.tsx
+      e) Add region to MACRO_ELIGIBLE_REGIONS in tag_mapping_service.py
+
+
+================================================================================
+  SUMMARY: TASKS BY PRIORITY
+================================================================================
+
+  HIGH — Blocks real data:
+    [ ] Phase 4A: FRED bridge (backend\services\fred_service.py)  ← start here
+    [ ] Phase 4B: ECB bridge  (backend\services\ecb_service.py)
+    [ ] Phase 4C: World Bank  (add to ecb_service or worldbank_service.py)
+    [ ] Phase 4D: CZSO bridge (backend\services\czso_service.py)
+    [ ] Phase 4E: CNB bridge  (backend\services\cnb_service.py)
+    [ ] Register FRED_API_KEY in backend\.env (free, 1 minute to get)
+
+  MEDIUM — Improves forecasting accuracy:
+    [ ] Phase 5A: IMF WEO CSV upload + parse  (backend\services\imf_service.py)
+    [ ] Phase 5B: Alpha tab signals implementation
+
+  LOW — Polish and completion:
+    [ ] Phase 6:  Caching layer (backend\data\ file cache with TTL)
+    [ ] Phase 7:  Server-side highlighted docs (tag_mapping_service.py)
+    [ ] Phase 8A: Custom forecast provider persistence
+    [ ] Phase 8B: Manual CSV/XLSX upload for China + Japan data
+
+================================================================================
