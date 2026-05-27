@@ -84,14 +84,14 @@ npx tsc --noEmit      # type-check only
 ### Backend
 ```bash
 # Windows — always use python.exe -m pip, never bare pip.exe (resolves wrong venv)
-venv\Scripts\activate
 .\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-uvicorn backend.main:app --reload --port 8000   # dev only — --reload is not for production
+# Start server — use python.exe -m uvicorn, NOT bare uvicorn (bare picks up system Python)
+.\venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
 
 # Unix
 source venv/bin/activate
 python -m pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload --port 8000   # dev only
+python -m uvicorn backend.main:app --reload --port 8000
 ```
 
 ### Type generation (Pydantic → TypeScript)

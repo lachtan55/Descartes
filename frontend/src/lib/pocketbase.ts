@@ -49,20 +49,45 @@ function normDoc(doc: Document): Document {
   };
 }
 
-export async function fetchDocuments(filterState: FilterState, page = 1, perPage = 100) {
+export async function fetchDocuments(filterState: FilterState): Promise<{ items: Document[]; totalItems: number }> {
+  // ── Server-side filter (search text + status) ─────────────────────────────
+  // Tags are stored as a JSON-type field in PocketBase (arrays of {category,value}
+  // objects). Relying on LIKE-based substring matching against PocketBase's
+  // Go-re-serialised JSON is brittle, so tag filtering is done client-side.
+  // getFullList automatically paginates so there is no arbitrary cutoff at 100.
   const filter = buildFilter(filterState);
-  const result = await pb.collection('documents').getList<Document>(page, perPage, {
+  const raw = await pb.collection('documents').getFullList<Document>({
     ...(filter ? { filter } : {}),
     requestKey: null,
   });
-  result.items = result.items.map(normDoc);
-  // Sort client-side: PocketBase v0.23+ has a bug sorting by system fields via API
-  result.items.sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''));
-  // Client-side starred filter
-  if (filterState.status === 'starred') {
-    result.items = result.items.filter(d => d.starred);
+
+  let items = raw.map(normDoc);
+
+  // totalItems reflects the server-filtered count (before client-side tag/starred
+  // narrowing). SearchFilter shows "Showing X of totalItems".
+  const totalItems = items.length;
+
+  // Sort newest-first — PocketBase v0.23+ has a bug sorting system fields via API.
+  items.sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''));
+
+  // ── Client-side tag filter ────────────────────────────────────────────────
+  // Logic: AND across selected categories, OR within each category.
+  // e.g. (market=financial_market OR stock_market) AND (instrument=ETF)
+  const tagEntries = Object.entries(filterState.tags).filter(([, vals]) => vals.length > 0);
+  if (tagEntries.length > 0) {
+    items = items.filter(doc =>
+      tagEntries.every(([cat, vals]) =>
+        doc.tags.some(tag => tag.category === cat && vals.includes(tag.value))
+      )
+    );
   }
-  return result;
+
+  // ── Client-side starred filter ────────────────────────────────────────────
+  if (filterState.status === 'starred') {
+    items = items.filter(d => d.starred);
+  }
+
+  return { items, totalItems };
 }
 
 /** Fetch all starred documents. Optional region filter checks macro tags. */
@@ -166,6 +191,29 @@ export function getFileUrl(doc: Document): string {
   return pb.files.getUrl(doc, doc.file);
 }
 
+// ── Database stats ────────────────────────────────────────────────────────
+
+export interface DbStats {
+  count: number;
+  totalBytes: number;
+}
+
+/**
+ * Returns the document count and total stored bytes across all records.
+ * Uses getFullList so the byte sum is always precise regardless of page size.
+ * Fetches only `id` and `file_size_bytes` to keep the payload minimal.
+ */
+export async function fetchDbStats(): Promise<DbStats> {
+  const items = await pb.collection('documents').getFullList<Pick<Document, 'id' | 'file_size_bytes'>>({
+    fields: 'id,file_size_bytes',
+    requestKey: 'db-stats',
+  });
+  return {
+    count: items.length,
+    totalBytes: items.reduce((sum, d) => sum + (d.file_size_bytes ?? 0), 0),
+  };
+}
+
 // ── Star / unstar ─────────────────────────────────────────────────────────
 
 export async function starDocument(docId: string): Promise<Document> {
@@ -206,11 +254,12 @@ export async function extractText(
 export async function suggestTags(
   text: string,
   filename: string,
+  provider: 'gemini' | 'claude' = 'gemini',
 ): Promise<{ tags: Array<Tag & { confidence: number }>; suggested_title: string; summary: string }> {
   const r = await fetch('/api/db/suggest-tags', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, filename }),
+    body: JSON.stringify({ text, filename, provider }),
   });
   if (!r.ok) throw new Error(await r.text());
   return r.json();

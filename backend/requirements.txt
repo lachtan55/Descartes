@@ -9,7 +9,17 @@ pypdf
 python-docx
 openpyxl
 nest_asyncio
+# ── IB TWS (Phase 5) ──
+# ib_insync is minimally maintained; community fork ib_async is the successor.
+# Migrate to ib_async when it stabilises (see CLAUDE.md).
+ib_insync>=0.9.70
 # ── Macro page additions ──
 anthropic>=0.40.0
 openai>=1.0.0
 python-multipart>=0.0.9
+# ── Options flow (Phase 5) ──
+# blpapi requires Bloomberg Terminal to be installed and running locally.
+# Safe to install without a terminal; the service will degrade to HTTP 503 at runtime.
+blpapi>=3.26.4.2
+# Install via: pip install blpapi --index-url https://blpapi.bloomberg.com/repository/releases/python/simple/
+# Offline fallback: blpapi-3.26.4.2-py3-none-win_amd64.whl is bundled in the repo root.

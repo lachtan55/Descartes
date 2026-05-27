@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import CORS_ORIGINS
 from backend.routers import price_data, ai_parse, tws, ib_data, ws, ib_connection, db, db_tagging, macro
+from backend.routers import options_flow as options_flow_router
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ app.include_router(ib_connection.router)
 app.include_router(db.router)
 app.include_router(db_tagging.router)
 app.include_router(macro.router)
+app.include_router(options_flow_router.router)
 
 
 @app.get("/api/health")

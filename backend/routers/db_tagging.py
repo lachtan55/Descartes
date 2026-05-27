@@ -7,15 +7,29 @@ POST /api/db/suggest-tags   { text, filename }       →  { tags, suggested_titl
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import re
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from backend import config
 from backend.gemini import call_gemini_json
+
+# ── Optional anthropic import ─────────────────────────────────────────────────
+# Mirrors the blpapi guard pattern: safe to run without the package installed;
+# the /suggest-tags route returns HTTP 503 with install instructions if missing.
+try:
+    import anthropic as _anthropic
+    _HAS_ANTHROPIC = True
+except ImportError:
+    _anthropic = None  # type: ignore[assignment]
+    _HAS_ANTHROPIC = False
 
 router = APIRouter(prefix="/api/db", tags=["db-tagging"])
 
@@ -56,6 +70,7 @@ class ExtractResponse(BaseModel):
 class SuggestRequest(BaseModel):
     text: str
     filename: str
+    provider: Literal["gemini", "claude"] = "gemini"
 
 
 class TagSuggestion(BaseModel):
@@ -88,8 +103,19 @@ def _extract_pdf(data: bytes) -> tuple[str, str]:
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(pages), "pypdf"
+        pages: list[str] = []
+        failed = 0
+        for page in reader.pages:
+            try:
+                pages.append(page.extract_text() or "")
+            except Exception:
+                # Some pages have malformed IndirectObjects in their geometry;
+                # skip the bad page rather than failing the whole document.
+                pages.append("")
+                failed += 1
+        text = "\n".join(pages)
+        method = "pypdf" if failed == 0 else f"pypdf-partial ({len(reader.pages) - failed}/{len(reader.pages)} pages)"
+        return text, method
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"PDF extraction failed: {e}")
 
@@ -147,46 +173,41 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str]:
         return _extract_text_bytes(data)
 
 
-# ── Gemini tagging ────────────────────────────────────────────────────────────
+# ── Shared tagging prompt ────────────────────────────────────────────────────
 
-TAXONOMY_DESCRIPTION = f"""
-You are a document tagger for a commodities / financial research database.
-
-Tag categories and their allowed values:
-
-FIXED CATEGORIES (use only the listed values):
-{json.dumps(FIXED_VALUES, indent=2)}
-
-FREE-FORM CATEGORIES (invent appropriate values):
-- ticker:    Stock/commodity tickers mentioned (e.g. "AAPL", "GC", "BTC-USD")
-- currency:  Currencies referenced (e.g. "USD", "EUR", "CNY")
-- macro:     Macroeconomic themes (e.g. "inflation", "rate_hike", "supply_chain")
-
-Apply as many relevant tags as appropriate. For each tag assign a confidence score 0.0–1.0.
-"""
-
-TAGGING_PROMPT_TEMPLATE = """
-{taxonomy}
-
-Document filename: {filename}
-
-Document text (first 8000 characters):
-\"\"\"
-{text}
-\"\"\"
-
-Return ONLY valid JSON (no markdown, no explanation) in this exact shape:
-{{
-  "suggested_title": "<concise document title, max 80 chars>",
-  "summary": "<2-3 sentence summary of the document>",
-  "tags": [
-    {{"category": "<category>", "value": "<value>", "confidence": <0.0-1.0>}},
-    ...
-  ]
-}}
-"""
+_TAXONOMY_DESCRIPTION: str = (
+    "FIXED categories — use ONLY the listed values:\n"
+    + json.dumps(FIXED_VALUES, indent=2)
+    + "\n\nFREE-FORM categories — invent appropriate values:\n"
+      "  ticker:    tickers mentioned (e.g. 'AAPL', 'GC', 'BTC-USD')\n"
+      "  currency:  currencies referenced (e.g. 'USD', 'EUR', 'CNY')\n"
+      "  macro:     macroeconomic themes (e.g. 'inflation', 'rate_hike', 'supply_chain')"
+)
 
 
+def _build_tagging_prompt(filename: str, text: str) -> str:
+    return (
+        "You are a financial research document tagger.\n\n"
+        f"{_TAXONOMY_DESCRIPTION}\n\n"
+        "Assign confidence 0.0–1.0 per tag; apply all relevant tags.\n\n"
+        f"Filename: {filename}\n"
+        f'Text (first 8000 chars):\n"""\n{text[:8000]}\n"""\n\n'
+        "Return ONLY valid JSON — no markdown, no explanation:\n"
+        '{\n'
+        '  "suggested_title": "<concise title, max 80 chars>",\n'
+        '  "summary": "<2-3 sentence summary>",\n'
+        '  "tags": [{"category": "<cat>", "value": "<val>", "confidence": 0.0}]\n'
+        '}'
+    )
+
+
+def _strip_fences(s: str) -> str:
+    """Remove markdown code fences that some models add despite instructions."""
+    s = s.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-z]*\n?", "", s)
+        s = re.sub(r"\n?```$", "", s)
+    return s.strip()
 
 
 # ── Route handlers ────────────────────────────────────────────────────────────
@@ -195,7 +216,9 @@ Return ONLY valid JSON (no markdown, no explanation) in this exact shape:
 async def extract_text(req: ExtractRequest):
     """Download the file from PocketBase and extract its text content."""
     data = await _download_file(req.file_url)
-    text, method = extract_text_from_bytes(req.filename, data)
+    # Run synchronous parser (pypdf / python-docx / openpyxl) in a thread so
+    # the event loop stays free for health-checks and other requests.
+    text, method = await asyncio.to_thread(extract_text_from_bytes, req.filename, data)
 
     # Trim excessively long text to keep downstream calls manageable
     MAX_CHARS = 50_000
@@ -211,16 +234,45 @@ async def extract_text(req: ExtractRequest):
 
 @router.post("/suggest-tags", response_model=SuggestResponse)
 async def suggest_tags(req: SuggestRequest):
-    """Call Gemini to suggest tags, title, and summary for a document."""
-    prompt = TAGGING_PROMPT_TEMPLATE.format(
-        taxonomy=TAXONOMY_DESCRIPTION,
-        filename=req.filename,
-        text=req.text[:8000],  # keep prompt size reasonable
-    )
+    """Call the selected AI provider to suggest tags, title, and summary."""
+    prompt = _build_tagging_prompt(req.filename, req.text)
 
-    result = call_gemini_json(prompt)
+    if req.provider == "claude":
+        if not config.ANTHROPIC_API_KEY:
+            raise HTTPException(
+                status_code=400,
+                detail="ANTHROPIC_API_KEY not configured",
+            )
+        if not _HAS_ANTHROPIC:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "anthropic package is not installed in the active Python environment. "
+                    "Run: .\\venv\\Scripts\\python.exe -m pip install anthropic "
+                    "then restart the FastAPI server."
+                ),
+            )
+        try:
+            # Run the blocking SDK call in a thread — keeps the event loop free.
+            def _call_claude() -> dict:
+                client = _anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+                msg = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return json.loads(_strip_fences(msg.content[0].text))
 
-    # Normalise and validate the response
+            result: dict = await asyncio.to_thread(_call_claude)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Claude error: {exc}")
+    else:
+        # Gemini branch — call_gemini_json uses time.sleep; run in thread.
+        result = await asyncio.to_thread(call_gemini_json, prompt)
+
+    # ── Normalise and validate the response ───────────────────────────────────
     suggested_title = str(result.get("suggested_title", req.filename))[:80]
     summary = str(result.get("summary", ""))
     raw_tags = result.get("tags", [])
@@ -236,15 +288,10 @@ async def suggest_tags(req: SuggestRequest):
         except (TypeError, ValueError):
             confidence = 0.5
 
-        # Skip tags with unknown categories
         if category not in ALL_CATEGORIES:
             continue
-
-        # For fixed categories, skip values not in the allowed list
         if category in FIXED_VALUES and value not in FIXED_VALUES[category]:
             continue
-
-        # Skip empty values
         if not value:
             continue
 

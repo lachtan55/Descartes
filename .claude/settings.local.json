@@ -34,7 +34,12 @@
       "Bash(python -m py_compile backend/main.py)",
       "Bash(dir backend\\\\venv)",
       "Bash(dir .venv)",
-      "Bash(dir *.bat)"
+      "Bash(dir *.bat)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\vojta\\\\Desktop\\\\Descartes-mainV2\"; $proc = Start-Process -FilePath \".\\\\venv\\\\Scripts\\\\python.exe\" -ArgumentList \"-m uvicorn backend.main:app --port 8000\" -PassThru -RedirectStandardOutput \"$env:TEMP\\\\uvicorn_out.txt\" -RedirectStandardError \"$env:TEMP\\\\uvicorn_err.txt\"; Start-Sleep -Seconds 5; $alive = -not $proc.HasExited; $alive)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pip install blpapi --index-url https://bcms.bloomberg.com/pip/simple/ 2>&1)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(powershell -Command \"\\(Get-Item 'blpapi-3.26.4.2-py3-none-win_amd64.whl'\\).length / 1MB\")",
+      "Bash(git add *)"
     ]
   }
 }

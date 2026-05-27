@@ -1304,6 +1304,12 @@ textarea.inp { height: auto; resize: vertical; font-size: 12px; }
   50%       { opacity: 0.4; }
 }
 
+/* AutoTagProgressBar spinner */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* Catalog table row hover */
 .macro-catalog-row:hover td {
   background: rgba(240,165,0,0.03);

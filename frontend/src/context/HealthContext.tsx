@@ -74,11 +74,12 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     checkBackend();
     checkPocketBase();
 
-    // Continue polling every 30s to detect recovery
+    // Poll every 10 s — short enough that a --reload restart clears before
+    // the 2-failure threshold is hit, avoiding false "offline" banners.
     const id = setInterval(() => {
       checkBackend();
       checkPocketBase();
-    }, 30_000);
+    }, 10_000);
 
     return () => clearInterval(id);
   }, []); // runs once on mount (app init)

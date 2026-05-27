@@ -13,7 +13,8 @@ interface Props {
   activeDocId: string | null;
   onDocClick: (d: Document) => void;
   onUpload: (d: Document) => void;
-  onAutoTag: (ids: string[]) => void;
+  onAutoTag: (ids: string[], provider: 'gemini' | 'claude') => void;
+  onAutoTagSilent: (ids: string[], provider: 'gemini' | 'claude') => void;
   onDelete: (ids: string[]) => void;
   onDocUpdate: (d: Document) => void;   // for star/unstar updates
   taggingLoading: boolean;
@@ -50,12 +51,13 @@ function formatDate(iso: string | undefined): string {
 
 export default function DocumentList({
   docs, loading, error, selected, onSelectChange, activeDocId,
-  onDocClick, onUpload, onAutoTag, onDelete, onDocUpdate, taggingLoading, taggingDocId,
+  onDocClick, onUpload, onAutoTag, onAutoTagSilent, onDelete, onDocUpdate, taggingLoading, taggingDocId,
   sortBy, onSortChange,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
   const [starringId, setStarringId] = useState<string | null>(null);
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'claude'>('gemini');
 
   const starredCount = docs.filter(d => d.starred).length;
 
@@ -135,8 +137,8 @@ export default function DocumentList({
         <button
           className="btn-secondary"
           disabled={taggingLoading || untaggedSelected.length === 0}
-          onClick={() => onAutoTag(untaggedSelected)}
-          title={`Auto-tag ${untaggedSelected.length} selected untagged document(s) with Gemini`}
+          onClick={() => onAutoTag(untaggedSelected, aiProvider)}
+          title={`Auto-tag ${untaggedSelected.length} selected untagged document(s) with ${aiProvider === 'gemini' ? 'Gemini Flash Lite' : 'Claude Haiku'}`}
         >
           {taggingLoading
             ? 'TAGGING...'
@@ -144,6 +146,47 @@ export default function DocumentList({
               ? `AUTO-TAG (${untaggedSelected.length})`
               : 'AUTO-TAG'}
         </button>
+
+        <button
+          className="btn-secondary"
+          disabled={taggingLoading || untaggedSelected.length === 0}
+          onClick={() => onAutoTagSilent(untaggedSelected, aiProvider)}
+          title={`Auto-tag and save ${untaggedSelected.length} document(s) automatically — skips review, saves tags with confidence ≥ 50%`}
+          style={{ opacity: 0.85 }}
+        >
+          {untaggedSelected.length > 1
+            ? `AUTO-SAVE (${untaggedSelected.length})`
+            : 'AUTO-SAVE'}
+        </button>
+
+        <div style={{
+          display: 'inline-flex',
+          border: '1px solid var(--border)',
+          borderRadius: 2,
+          overflow: 'hidden',
+          flexShrink: 0,
+        }}>
+          {(['gemini', 'claude'] as const).map(p => (
+            <button
+              key={p}
+              disabled={taggingLoading}
+              onClick={() => setAiProvider(p)}
+              style={{
+                background: aiProvider === p ? 'var(--accent-amber)' : 'var(--bg-secondary)',
+                color: aiProvider === p ? '#0d0d0d' : 'var(--text-secondary)',
+                border: 'none',
+                borderLeft: p === 'claude' ? '1px solid var(--border)' : 'none',
+                padding: '3px 8px',
+                cursor: taggingLoading ? 'default' : 'pointer',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9,
+                letterSpacing: '0.5px',
+              }}
+            >
+              {p === 'gemini' ? 'GEMINI FLASH LITE' : 'CLAUDE HAIKU'}
+            </button>
+          ))}
+        </div>
 
         {selected.size > 0 && (
           <button className="btn-xs red" onClick={() => onDelete(selArray)}>

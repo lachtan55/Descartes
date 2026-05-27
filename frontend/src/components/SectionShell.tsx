@@ -2,6 +2,7 @@ import { useState, useEffect, Component, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MODULES, ModuleConfig } from '../config/modules';
 import { useHealth } from '../context/HealthContext';
+import AutoTagProgressBar from './AutoTagProgressBar';
 
 class ErrorBoundary extends Component<
   { children: ReactNode; tabKey: string },
@@ -132,6 +133,9 @@ export default function SectionShell({ moduleId, activeTab, onTabChange, childre
           </button>
         </div>
       )}
+
+      {/* Global auto-tag progress strip — visible across all section tabs */}
+      <AutoTagProgressBar />
 
       {aboveContent}
 

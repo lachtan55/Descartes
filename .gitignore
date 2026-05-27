@@ -19,3 +19,6 @@ pb_backups/
 *.db
 *.db-shm
 *.db-wal
+
+# Python wheel packages (binary build artifacts — install from PyPI / local path instead)
+*.whl
