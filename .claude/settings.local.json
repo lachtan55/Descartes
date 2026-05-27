@@ -39,7 +39,10 @@
       "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pip install blpapi --index-url https://bcms.bloomberg.com/pip/simple/ 2>&1)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "Bash(powershell -Command \"\\(Get-Item 'blpapi-3.26.4.2-py3-none-win_amd64.whl'\\).length / 1MB\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat: Claude AI provider, auto-tag queue, progress bar, tag filtering *)",
+      "Bash(git commit -m 'chore: update Claude Code allowed-tools settings *)",
+      "Bash(git push *)"
     ]
   }
 }
